@@ -1,0 +1,27 @@
+[package]
+name = "test-utils"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.72"
+futures = "0.3.29"
+futures-util = "0.3"
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+beetswap = { path = "../.." }
+blockstore = "0.7"
+cid = "0.11"
+libp2p = { version = "0.54.0", features = [
+  "identify",
+  "macros",
+  "noise",
+  "yamux",
+  "websocket",
+  "dns",
+  "request-response",
+  "cbor",
+] }
+multihash-codetable = { version = "0.1.4", features = ["blake3"] }

@@ -1,0 +1,10 @@
+check32:
+  cargo check --target wasm32-unknown-unknown
+
+pack:
+  wasm-pack build --target web --out-dir static
+
+serve:
+  cargo run --bin interop-tests-native
+
+serve-interop: pack serve
