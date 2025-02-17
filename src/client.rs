@@ -626,7 +626,6 @@ impl<const S: usize> ClientConnectionHandler<S> {
                 // If we have never reached the `Sending` state within the specified
                 // time, we abort and halt this connection.
                 if delay.poll_unpin(cx).is_ready() {
-                    self.start_sending_timeout.take();
                     self.msg.take();
                     self.close_sink_on_error("start_sending_timeout");
                     self.change_sending_state(SendingState::Failed(self.connection_id));
