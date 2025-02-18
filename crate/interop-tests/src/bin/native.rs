@@ -1,29 +1,29 @@
 //! The server node portion of the interop
 #![cfg(not(target_arch = "wasm32"))]
 
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::process::Stdio;
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use axum::extract::State;
 use axum::http::header::CONTENT_TYPE;
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse};
-use axum::routing::{get, post};
-use axum::{http, Json, Router};
-use blockstore::{Blockstore, InMemoryBlockstore};
+use axum::routing::get;
+use axum::{http, Router};
+use blockstore::InMemoryBlockstore;
 use cid::Cid;
 use futures_util::stream::StreamExt;
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::Message;
 use libp2p::swarm::SwarmEvent;
-use libp2p::{Multiaddr, PeerId, Swarm, SwarmBuilder};
+use libp2p::{Multiaddr, SwarmBuilder};
 use test_utils::PeerRequest;
-use thirtyfour::prelude::*;
+use thirtyfour::{prelude::*, PageLoadStrategy};
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 use tokio::process::Child;
-use tokio::sync::mpsc;
+use tokio::sync::watch;
 use tower_http::cors::{self, CorsLayer};
 
 const CID_SIZE: usize = 64;
@@ -33,8 +33,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = tracing_subscriber::fmt()
         .with_env_filter("interop_tests_native=debug,beetswap=debug")
         .try_init();
-
-    tracing::info!("Starting native TESTS");
 
     let blockstore: InMemoryBlockstore<CID_SIZE> = InMemoryBlockstore::new();
 
@@ -72,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         break p2p_addr;
                     }
                 }
-                Some(Protocol::Ip4(ip4)) => {
+                Some(Protocol::Ip4(_ip4)) => {
                     let p2p_addr = address.clone().with(Protocol::P2p(*swarm.local_peer_id()));
                     swarm.add_external_address(p2p_addr.clone());
                     tracing::info!("👉  Added {p2p_addr}");
@@ -87,7 +85,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!(%address, "Listening on");
 
-    tokio::spawn(serve(address.clone()));
+    let (shutdown_tx, shutdown_rx) = watch::channel(());
+    let server_handle = tokio::spawn(serve(address.clone(), shutdown_rx));
 
     let mut qid = None;
 
@@ -142,14 +141,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("🎉🎉🎉Test passed!");
 
-    // trigger end of test by hitting the results endpoint
-    // with a GET request
-    //let client = reqwest::Client::new();
-    //let res = client
-    //    .get("http://127.0.0.1:8080/results")
-    //    .send()
-    //    .await
-    //    .context("Failed to send results")?;
+    // Send shutdown signal
+    shutdown_tx.send(()).unwrap();
+
+    // Await server handle to ensure it has shutdown
+    let _ = server_handle.await.unwrap();
 
     Ok(())
 }
@@ -159,24 +155,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 struct StaticFiles;
 
 /// Serve the Multiaddr we are listening on and the host files.
-pub(crate) async fn serve(libp2p_transport: Multiaddr) -> Result<()> {
+pub(crate) async fn serve(
+    libp2p_transport: Multiaddr,
+    mut shutdown: watch::Receiver<()>,
+) -> Result<()> {
     let Some(Protocol::Ip4(_listen_addr)) = libp2p_transport.iter().next() else {
         panic!("Expected 1st protocol to be IP")
     };
-
-    let (results_tx, mut results_rx) = mpsc::channel(1);
-
-    tracing::info!("Serving libp2pendpoint {:?}", libp2p_transport);
 
     let server = Router::new()
         .route("/", get(get_index))
         .route("/index.html", get(get_index))
         .route("/:path", get(get_static_file))
         // Report tests status
-        .route("/results", get(get_results))
         .with_state(Libp2pState {
             endpoint: libp2p_transport.clone(),
-            results_tx,
         })
         .layer(
             // allow cors
@@ -191,32 +184,38 @@ pub(crate) async fn serve(libp2p_transport: Multiaddr) -> Result<()> {
 
     tracing::info!(url=%format!("http://{addr}"), "Serving client files at url");
 
-    tracing::info!(url=%format!("http://{addr}"), "Opening browser");
+    let mut shut = shutdown.clone();
 
-    axum::Server::bind(&addr)
-        .serve(server.into_make_service())
+    tokio::spawn(async move {
+        let server = axum::Server::bind(&addr).serve(server.into_make_service());
+        let graceful = server.with_graceful_shutdown(async {
+            shut.changed().await.ok();
+        });
+        graceful.await.ok();
+    });
+
+    let (mut chrome, driver) = open_in_browser(&format!("http://{addr:?}"))
         .await
+        .map_err(|e| tracing::error!(?e, "Failed to open browser"))
         .unwrap();
 
-    //let (mut chrome, driver) = open_in_browser(&format!("http://{addr:?}"))
-    //    .await
-    //    .map_err(|e| tracing::error!(?e, "Failed to open browser"))
-    //    .unwrap();
-    //
-    //// loop until we get a request_response from the browser with the CID they
-    //// have that we want to ask for.
-    //match tokio::time::timeout(Duration::from_secs(5), results_rx.recv()).await {
-    //    Ok(_) => tracing::info!("Received test result"),
-    //    Err(_) => tracing::warn!("Test timed out"),
-    //};
-    //
-    //tracing::info!("Closing browser");
-    //
-    //// Close the browser after we got the results
-    //driver.quit().await?;
-    //chrome.kill().await?;
-    //
-    //tracing::info!("Browser closed");
+    // shutdown or 15 second
+    match tokio::time::timeout(Duration::from_secs(15), shutdown.changed()).await {
+        Ok(_) => {
+            tracing::info!("Received shutdown signal");
+        }
+        Err(_) => {
+            tracing::info!("Timeout reached, closing browser");
+        }
+    }
+
+    tracing::info!("Closing browser");
+
+    // Close the browser after we got the results
+    driver.quit().await?;
+    chrome.kill().await?;
+
+    tracing::info!("Browser closed");
 
     Ok(())
 }
@@ -224,7 +223,6 @@ pub(crate) async fn serve(libp2p_transport: Multiaddr) -> Result<()> {
 #[derive(Clone)]
 struct Libp2pState {
     endpoint: Multiaddr,
-    results_tx: mpsc::Sender<()>,
 }
 
 /// Serves the index.html file for our client.
@@ -262,17 +260,6 @@ async fn get_static_file(
     Ok(([(CONTENT_TYPE, content_type)], content))
 }
 
-/// End the test.
-async fn get_results(
-    state: State<Libp2pState>,
-    _request: Json<Result<(), String>>,
-) -> Result<(), StatusCode> {
-    state.0.results_tx.send(()).await.map_err(|_| {
-        tracing::error!("Failed to send results");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })
-}
-
 async fn open_in_browser(addr: &str) -> Result<(Child, WebDriver)> {
     // start a webdriver process
     tracing::info!("Starting chromedriver");
@@ -305,21 +292,23 @@ async fn open_in_browser(addr: &str) -> Result<(Child, WebDriver)> {
 
     // run a webdriver client
     let mut caps = DesiredCapabilities::chrome();
-    //caps.set_headless()
-    //    .map_err(|_| anyhow::anyhow!("Failed to set headless"))?;
-    //caps.set_disable_dev_shm_usage()
-    //    .map_err(|_| anyhow::anyhow!("Failed to set disable_dev_shm_usage"))?;
-    //caps.set_no_sandbox()
-    //    .map_err(|_| anyhow::anyhow!("Failed to set no_sandbox"))?;
+    caps.set_headless()
+        .map_err(|_| anyhow::anyhow!("Failed to set headless"))?;
+    caps.set_disable_dev_shm_usage()
+        .map_err(|_| anyhow::anyhow!("Failed to set disable_dev_shm_usage"))?;
+    caps.set_no_sandbox()
+        .map_err(|_| anyhow::anyhow!("Failed to set no_sandbox"))?;
 
     let driver = WebDriver::new("http://localhost:45782", caps)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create web driver: {:?}", e))?;
-    // go to the wasm test service
+
     driver
-        .goto(format!("http://{addr}"))
+        .goto("http://127.0.0.1:8080/")
         .await
         .map_err(|e| anyhow::anyhow!("Failed to navigate to test service: {:?}", e))?;
+
+    tracing::info!("♥️  Web is ready");
 
     Ok((chrome, driver))
 }
