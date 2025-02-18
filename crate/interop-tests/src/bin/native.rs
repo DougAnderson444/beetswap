@@ -86,66 +86,74 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(%address, "Listening on");
 
     let (shutdown_tx, shutdown_rx) = watch::channel(());
-    let server_handle = tokio::spawn(serve(address.clone(), shutdown_rx));
+    let mut server_handle = tokio::spawn(serve(address.clone(), shutdown_rx));
 
-    let mut qid = None;
-
-    // loop until we receive a request_response from the browser with the CID they
-    // have that we want to ask for.
+    // loop on swarm.select_next_some().await and server_handle, whichever finishes first
     loop {
-        if let SwarmEvent::Behaviour(test_utils::BehaviourEvent::RequestResponse(
-            libp2p::request_response::Event::Message {
-                message:
-                    Message::Request {
-                        request: PeerRequest(cid_bytes),
-                        ..
-                    },
-                ..
-            },
-        )) = swarm.select_next_some().await
-        {
-            tracing::info!(?cid_bytes, "Received request with CID");
-
-            if let Ok(cid) = Cid::try_from(cid_bytes) {
-                // request this cid vis bitswap
-                tracing::info!(?cid, "Requesting CID via bitswap");
-                qid.replace(swarm.behaviour_mut().bitswap.get(&cid));
+        tokio::select! {
+            _ = &mut server_handle => {
+                tracing::info!("Server handle finished");
                 break;
+            }
+            event = swarm.select_next_some() => {
+                match event {
+                    SwarmEvent::Behaviour(test_utils::BehaviourEvent::RequestResponse(
+                        libp2p::request_response::Event::Message {
+                            message:
+                                Message::Request {
+                                    request: PeerRequest(cid_bytes),
+                                    ..
+                                },
+                            ..
+                        },
+                    )) => {
+                        tracing::info!(?cid_bytes, "Received request with CID");
+
+                        if let Ok(cid) = Cid::try_from(cid_bytes) {
+                            // request this cid vis bitswap
+                            tracing::info!(?cid, "Requesting CID via bitswap");
+                            let qid = swarm.behaviour_mut().bitswap.get(&cid);
+
+                            // wait for the block to be fetched
+                            // we'll know because it's a beetswap::Event::GetQueryResponse { query_id, data }
+                            // and the data should be the same as TEST_BLOCK_DATA
+                            let block = loop {
+                                let event = swarm.select_next_some().await;
+                                if let SwarmEvent::Behaviour(test_utils::BehaviourEvent::Bitswap(
+                                    beetswap::Event::GetQueryResponse { query_id, data },
+                                )) = event
+                                {
+                                    tracing::info!(?query_id, "🎉 Received block data!");
+                                        if qid == query_id {
+                                            tracing::info!("🎉🎉 Block data matches!");
+                                            break data;
+                                        }
+                                } else {
+                                    tracing::warn!(?event, "Ignoring event {:?}", event);
+                                }
+                            };
+
+                            // check the block data
+                            assert_eq!(block, test_utils::TEST_BLOCK_DATA);
+
+                            tracing::info!("🎉🎉🎉Test passed!");
+
+                            // Send shutdown signal
+                            shutdown_tx.send(()).unwrap();
+
+                            break;
+                        }
+                    }
+                    _ => {
+                        tracing::warn!(?event, "Ignoring event {:?}", event);
+                    }
+                }
             }
         }
     }
 
-    // wait for the block to be fetched
-    // we'll know because it's a beetswap::Event::GetQueryResponse { query_id, data }
-    // and the data should be the same as TEST_BLOCK_DATA
-    let block = loop {
-        let event = swarm.select_next_some().await;
-        if let SwarmEvent::Behaviour(test_utils::BehaviourEvent::Bitswap(
-            beetswap::Event::GetQueryResponse { query_id, data },
-        )) = event
-        {
-            tracing::info!(?query_id, "🎉 Received block data!");
-            if let Some(qid) = qid {
-                if qid == query_id {
-                    tracing::info!("🎉🎉 Block data matches!");
-                    break data;
-                }
-            }
-        } else {
-            tracing::warn!(?event, "Ignoring event {:?}", event);
-        }
-    };
-
-    // check the block data
-    assert_eq!(block, test_utils::TEST_BLOCK_DATA);
-
-    tracing::info!("🎉🎉🎉Test passed!");
-
-    // Send shutdown signal
-    shutdown_tx.send(()).unwrap();
-
     // Await server handle to ensure it has shutdown
-    let _ = server_handle.await.unwrap();
+    server_handle.await??;
 
     Ok(())
 }
@@ -201,12 +209,8 @@ pub(crate) async fn serve(
 
     // shutdown or 15 second
     match tokio::time::timeout(Duration::from_secs(15), shutdown.changed()).await {
-        Ok(_) => {
-            tracing::info!("Received shutdown signal");
-        }
-        Err(_) => {
-            tracing::info!("Timeout reached, closing browser");
-        }
+        Ok(_) => tracing::info!("Received shutdown signal"),
+        Err(_) => tracing::info!("Timeout reached, closing browser"),
     }
 
     tracing::info!("Closing browser");
