@@ -33,7 +33,7 @@ use crate::{Error, Event, Result, ToBehaviourEvent, ToHandlerEvent};
 
 const SEND_FULL_INTERVAL: Duration = Duration::from_secs(30);
 const RECEIVE_REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
-const START_SENDING_TIMEOUT: Duration = Duration::from_secs(5);
+const START_SENDING_TIMEOUT: Duration = Duration::from_secs(12);
 
 /// ID of an ongoing query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -622,10 +622,11 @@ impl<const S: usize> ClientConnectionHandler<S> {
                 return Poll::Pending;
             }
 
-            if let Some(delay) = &mut self.start_sending_timeout.take() {
+            if let Some(delay) = &mut self.start_sending_timeout {
                 // If we have never reached the `Sending` state within the specified
                 // time, we abort and halt this connection.
                 if delay.poll_unpin(cx).is_ready() {
+                    self.start_sending_timeout.take();
                     self.msg.take();
                     self.close_sink_on_error("start_sending_timeout");
                     self.change_sending_state(SendingState::Failed(self.connection_id));
