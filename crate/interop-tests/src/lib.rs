@@ -7,6 +7,7 @@ use blockstore::Blockstore;
 use blockstore::InMemoryBlockstore;
 use cid::Cid;
 use libp2p::futures::StreamExt;
+use libp2p::request_response::Message;
 use libp2p::request_response::ProtocolSupport;
 use libp2p::StreamProtocol;
 use libp2p::{
@@ -19,9 +20,9 @@ use libp2p::{
 use libp2p::{multiaddr::Protocol, Multiaddr};
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;
-use test_utils::PeerRequest;
 use test_utils::RawBlakeBlock;
 use test_utils::TEST_BLOCK_DATA;
+use test_utils::{PeerRequest, PeerResponse};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use web_time::Duration;
@@ -98,6 +99,21 @@ pub async fn run_test_wasm(libp2p_endpoint: String) -> Result<(), JsValue> {
                         return Err(JsValue::from_str(&format!("{:?}", err)));
                     }
                     break;
+                }
+            }
+            // Got the ACK PeerResponse from the server
+            SwarmEvent::Behaviour(test_utils::BehaviourEvent::RequestResponse(
+                libp2p::request_response::Event::Message {
+                    peer,
+                    message:
+                        Message::Response {
+                            request_id,
+                            response: PeerResponse,
+                        },
+                },
+            )) => {
+                if peer == remote_peer_id {
+                    tracing::info!("Received PeerResponse from server");
                 }
             }
             _ => {}

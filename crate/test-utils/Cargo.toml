@@ -25,3 +25,4 @@ libp2p = { version = "0.54.0", features = [
   "cbor",
 ] }
 multihash-codetable = { version = "0.1.4", features = ["blake3"] }
+web-time = "1.1.0"

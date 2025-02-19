@@ -19,7 +19,7 @@ use libp2p::multiaddr::Protocol;
 use libp2p::request_response::Message;
 use libp2p::swarm::SwarmEvent;
 use libp2p::{Multiaddr, SwarmBuilder};
-use test_utils::PeerRequest;
+use test_utils::{PeerRequest, PeerResponse};
 use thirtyfour::{prelude::*, PageLoadStrategy};
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 use tokio::process::Child;
@@ -102,12 +102,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             message:
                                 Message::Request {
                                     request: PeerRequest(cid_bytes),
+                                    channel,
                                     ..
                                 },
                             ..
                         },
                     )) => {
                         tracing::info!(?cid_bytes, "Received request with CID");
+
+                        // respond to the request with unit ACK response
+                        if let Err(e) = swarm.behaviour_mut().request_response.send_response(
+                            channel,
+                            PeerResponse,
+                        ) {
+                            tracing::error!(?e, "Failed to send response");
+                        };
 
                         if let Ok(cid) = Cid::try_from(cid_bytes) {
                             // request this cid vis bitswap

@@ -10,6 +10,7 @@ use multihash_codetable::Code;
 use multihash_codetable::MultihashDigest as _;
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;
+use web_time::Duration;
 
 pub const CID_SIZE: usize = 64;
 
@@ -29,7 +30,7 @@ pub fn new_behaviour(
             StreamProtocol::new(HIT_ME_UP_PROTOCOL),
             ProtocolSupport::Full,
         )],
-        libp2p::request_response::Config::default(),
+        libp2p::request_response::Config::default().with_request_timeout(Duration::from_secs(1)),
     );
 
     Behaviour {
@@ -67,15 +68,7 @@ impl Deref for PeerRequest {
 
 /// Jeeves Response Bytes
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub struct PeerResponse(());
-
-impl Deref for PeerResponse {
-    type Target = ();
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
+pub struct PeerResponse;
 
 const RAW_CODEC: u64 = 0x55;
 
