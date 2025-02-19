@@ -138,7 +138,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             break data;
                                         }
                                 } else {
-                                    tracing::warn!(?event, "Ignoring event {:?}", event);
+                                    tracing::warn!(?event, "Non-bitswap event {:?}", event);
                                 }
                             };
 
