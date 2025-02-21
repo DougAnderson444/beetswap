@@ -65,7 +65,7 @@ pub async fn run_test_wasm(libp2p_endpoint: String) -> Result<(), JsValue> {
         .map_err(|e| JsValue::from_str(&format!("{:?}", e)))?
         .with_behaviour(|key| test_utils::new_behaviour(key, blockstore))
         .map_err(|e| JsValue::from_str(&format!("{:?}", e)))?
-        .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(32_212_254u64)))
+        .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(30)))
         .build();
 
     // Dial the remote peer
@@ -82,7 +82,9 @@ pub async fn run_test_wasm(libp2p_endpoint: String) -> Result<(), JsValue> {
                     break;
                 }
             }
-            _ => {}
+            evt => {
+                tracing::info!("Other event: {:?}", evt);
+            }
         }
     }
 
@@ -116,7 +118,9 @@ pub async fn run_test_wasm(libp2p_endpoint: String) -> Result<(), JsValue> {
                     tracing::info!("Received PeerResponse from server");
                 }
             }
-            _ => {}
+            evt => {
+                tracing::info!("Other event: {:?}", evt);
+            }
         }
     }
 

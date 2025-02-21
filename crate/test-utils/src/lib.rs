@@ -30,7 +30,7 @@ pub fn new_behaviour(
             StreamProtocol::new(HIT_ME_UP_PROTOCOL),
             ProtocolSupport::Full,
         )],
-        libp2p::request_response::Config::default().with_request_timeout(Duration::from_secs(1)),
+        libp2p::request_response::Config::default(),
     );
 
     Behaviour {

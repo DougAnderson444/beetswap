@@ -20,7 +20,7 @@ use libp2p::request_response::Message;
 use libp2p::swarm::SwarmEvent;
 use libp2p::{Multiaddr, SwarmBuilder};
 use test_utils::{PeerRequest, PeerResponse};
-use thirtyfour::{prelude::*, PageLoadStrategy};
+use thirtyfour::prelude::*;
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 use tokio::process::Child;
 use tokio::sync::watch;
@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ))
         })?
         .with_behaviour(|key| test_utils::new_behaviour(key, blockstore))?
-        .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(32_212_254u64)))
+        .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(30)))
         .build();
 
     let address_webrtc = Multiaddr::from(Ipv4Addr::UNSPECIFIED)

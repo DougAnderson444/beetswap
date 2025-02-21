@@ -1,3 +1,4 @@
 /target
 crate/interop-tests/target
 crate/test-utils/target
+crate/interop-tests/static/.gitignore

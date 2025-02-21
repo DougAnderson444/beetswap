@@ -87,3 +87,7 @@ web-time = "1.1"
 getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
+
+[patch.crates-io]
+libp2p = { git = "https://github.com/DougAnderson444/rust-libp2p.git", branch = "core-v0.42-webrtc-utils-0.3.0" }
+libp2p-webrtc-utils = { git = "https://github.com/DougAnderson444/rust-libp2p.git", branch = "core-v0.42-webrtc-utils-0.3.0" }
